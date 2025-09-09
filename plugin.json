@@ -1,5 +1,5 @@
 {
-  "name": "plugin-sample-vite-svelte",
+  "name": "plugin-export-s3-markdown",
   "author": "frostime",
   "url": "https://github.com/siyuan-note/plugin-sample-vite-svelte",
   "version": "0.4.1",
@@ -21,12 +21,12 @@
     "desktop-window"
   ],
   "displayName": {
-    "en_US": "Plugin sample with vite and svelte",
-    "zh_CN": "插件样例 vite + svelte 版"
+    "en_US": "Upload to S3 and export as Markdown",
+    "zh_CN": "上传s3并导出markdown"
   },
   "description": {
-    "en_US": "SiYuan plugin sample with vite and svelte",
-    "zh_CN": "使用 vite 和 svelte 开发的思源插件样例"
+    "en_US": "Upload to S3 and export as Markdown",
+    "zh_CN": "一键导出当前文章，并自动上传对象存储（支持直接导出到剪切板）"
   },
   "readme": {
     "en_US": "README.md",
@@ -38,8 +38,8 @@
     ]
   },
   "keywords": [
-    "plugin",
-    "sample",
-    "插件样例"
+    "s3",
+    "minio",
+    "导出"
   ]
 }

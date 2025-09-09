@@ -9,7 +9,6 @@ import {
     ICard,
     ICardData,
     Menu,
-    openMobileFileById,
     Plugin,
     Protyle,
     showMessage
@@ -22,9 +21,20 @@ import SettingExample from "@/setting-example.svelte";
 
 import {SettingUtils} from "./libs/setting-utils";
 import {svelteDialog} from "./libs/dialog";
+import {exportMdContent, getFileBlob, initS3Client} from "@/api";
+import {PutObjectCommand} from "@aws-sdk/client-s3";
 
 const STORAGE_NAME = "menu-config";
 const DOCK_TYPE = "dock_tab";
+
+function getFilePathsFromMd(content: string) {
+
+    return content.match(/!\[.*?]\((.*?)\)/g)?.map(match => {
+        const filePath = match.match(/\((.*?)\)/)[1];
+        return filePath;
+    }) ?? [];
+
+}
 
 export default class PluginSample extends Plugin {
 
@@ -54,6 +64,63 @@ export default class PluginSample extends Plugin {
 
         const frontEnd = getFrontend();
         this.isMobile = frontEnd === "mobile" || frontEnd === "browser-mobile";
+
+        // 监听来自Svelte组件的消息
+        const handleMessage = async (event: MessageEvent) => {
+            // 保存S3配置
+            if (event.data.cmd === 'saveS3Config') {
+                try {
+                    await this.saveData('s3-config.json', event.data.data);
+                    console.log('S3配置已保存:', event.data.data);
+                    // 更新插件实例中的数据
+                    this.data.s3Config = event.data.data;
+                } catch (error) {
+                    console.error('保存S3配置失败:', error);
+                }
+            }
+            // 获取S3配置状态
+            else if (event.data.cmd === 'getS3ConfigStatus') {
+                try {
+                    const s3Config = this.getS3Config();
+                    const configured = s3Config &&
+                        s3Config.endpoint &&
+                        s3Config.accessKey &&
+                        s3Config.secretKey &&
+                        s3Config.bucket;
+
+                    // 将配置状态发送回请求的组件
+                    event.source.postMessage({
+                        cmd: 'returnS3ConfigStatus',
+                        data: {
+                            configured: !!configured,
+                            config: s3Config || {}
+                        }
+                    }, {targetOrigin: '*'});
+
+                } catch (error) {
+                    console.error('获取S3配置状态失败:', error);
+                    event.source.postMessage({
+                        cmd: 'returnS3ConfigStatus',
+                        data: {
+                            configured: false,
+                            config: {}
+                        }
+                    }, {targetOrigin: '*'});
+                }
+            }
+        };
+
+        window.addEventListener('message', handleMessage);
+
+        // 在插件卸载时清理事件监听器
+        const originalOnunload = this.onunload;
+        this.onunload = async () => {
+            window.removeEventListener('message', handleMessage);
+            if (originalOnunload) {
+                await originalOnunload.call(this);
+            }
+        };
+
         // 图标的制作参见帮助文档
         this.addIcons(`
 <!--<symbol id="iconFace" viewBox="0 0 32 32">-->
@@ -297,12 +364,27 @@ export default class PluginSample extends Plugin {
         };
 
         console.log(this.i18n.helloPlugin);
+
+        // 加载s3配置
+        try {
+            const s3Config = await this.loadData('s3-config.json');
+            if (s3Config) {
+                console.log('Loaded S3 config:', s3Config);
+                this.data.s3Config = s3Config;
+            } else {
+                console.log('No S3 config found');
+            }
+        } catch (error) {
+            console.log('Error loading S3 config:', error);
+        }
+
+
     }
 
     onLayoutReady() {
         const topBarElement = this.addTopBar({
             icon: "iconFace",
-            title: this.i18n.addTopBarIcon,
+            title: 'markdown s3导出插件',
             position: "right",
             callback: () => {
                 if (this.isMobile) {
@@ -391,6 +473,28 @@ export default class PluginSample extends Plugin {
             target: dialog.element.querySelector("#SettingPanel"),
         });
     }
+
+    /**
+     * 获取S3配置
+     * @returns S3配置对象，如果未配置则返回null
+     */
+    public getS3Config(): any {
+        return this.data.s3Config || null;
+    }
+
+    /**
+     * 检查S3配置是否已设置
+     * @returns boolean
+     */
+    public isS3Configured(): boolean {
+        const config = this.getS3Config();
+        return config &&
+            config.endpoint &&
+            config.accessKey &&
+            config.secretKey &&
+            config.bucket;
+    }
+
     private showDialog() {
         const docId = this.getEditor().protyle.block.rootID;
         svelteDialog({
@@ -420,16 +524,52 @@ export default class PluginSample extends Plugin {
             }
         });
         menu.addSeparator();
-        if (!this.isMobile) {
-        } else {
-            menu.addItem({
-                icon: "iconFile",
-                label: "Open Doc(open doc first)",
-                click: () => {
-                    openMobileFileById(this.app, this.getEditor().protyle.block.rootID);
-                }
-            });
-        }
+        menu.addItem({
+            icon: "iconCopy",
+            label: "导出md文件到剪切板",
+            click: () => {
+                const docId = this.getEditor().protyle.block.rootID;
+                exportMdContent(docId).then(async res => {
+                    const processedContent = await this.processMarkdownContent(res.content);
+                    if (processedContent) {
+                        // 复制到剪切板
+                        await navigator.clipboard.writeText(processedContent);
+                        showMessage("已复制到剪切板");
+                    }
+                });
+            }
+        });
+        menu.addItem({
+            icon: "iconFile",
+            label: "导出md文件",
+            click: () => {
+                const docId = this.getEditor().protyle.block.rootID;
+                exportMdContent(docId).then(async res => {
+                    const processedContent = await this.processMarkdownContent(res.content);
+                    if (processedContent) {
+                        // 系统弹窗保存位置
+                        const blob = new Blob([processedContent], {type: 'text/markdown;charset=utf-8'});
+                        const url = URL.createObjectURL(blob);
+
+                        // 创建下载链接
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `export-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.md`;
+                        document.body.appendChild(a);
+                        a.click();
+
+                        // 清理
+                        setTimeout(() => {
+                            document.body.removeChild(a);
+                            URL.revokeObjectURL(url);
+                        }, 100);
+
+                        showMessage("文件已下载");
+                    }
+                });
+            }
+        });
+
         if (this.isMobile) {
             menu.fullscreen();
         } else {
@@ -438,6 +578,92 @@ export default class PluginSample extends Plugin {
                 y: rect.bottom,
                 isLeft: true,
             });
+        }
+    }
+
+    /**
+     * 处理Markdown内容，上传其中的图片到S3并更新链接
+     * @param content 原始Markdown内容
+     * @returns 处理后的Markdown内容，如果出错则返回null
+     */
+    private async processMarkdownContent(content: string): Promise<string | null> {
+        try {
+            // 1. 检查是否配置s3
+            if (!this.isS3Configured()) {
+                showMessage("请先配置S3配置");
+                this.openSetting();
+                return null;
+            }
+            
+            // 2. 获取所有链接中的文件
+            const filePaths = getFilePathsFromMd(content);
+            // 3. 上传到s3
+            const {endpoint, accessKey, secretKey, bucket, region} = this.getS3Config();
+            const client = initS3Client(endpoint, accessKey, secretKey, region || 'us-east-1');
+
+            // 创建path到S3 URL的映射
+            const pathToS3UrlMap = new Map<string, string>();
+
+            // 使用Promise.all并行处理所有文件上传
+            const uploadPromises = filePaths.map(async (item) => {
+                try {
+                    // 有空格%20就修改为空格
+                    item = item.replace(/%20/g, ' ');
+                    // 获取Blob
+                    const fileData = await getFileBlob('/data/' + item);
+                    const fileDataBuffer = new Uint8Array(await fileData.arrayBuffer())
+
+                    // 确保数据有效后再上传
+                    if (!fileData) {
+                        throw new Error(`无法获取文件数据: ${item}`);
+                    }
+
+                    // 生成S3中的文件路径（可以保持原文件名或添加时间戳等）
+                    const fileName = item.split('/').pop() || 'unnamed-file';
+                    const s3Key = `siyuan-assets/${fileName}`;
+
+                    const command = new PutObjectCommand({
+                        Bucket: bucket,
+                        Key: s3Key,
+                        Body: fileDataBuffer,
+                        ContentType: fileData.type
+                    });
+
+                    await client.send(command);
+
+                    // 生成公共访问URL
+                    const s3Url = `${endpoint}/${bucket}/${s3Key}`;
+                    pathToS3UrlMap.set(item, s3Url);
+
+                    console.log(`文件 ${item} 已上传到 ${s3Url}`);
+                } catch (error) {
+                    console.error(`上传文件 ${item} 失败:`, error);
+                }
+            });
+
+            await Promise.all(uploadPromises);
+            showMessage("文件上传完成！");
+
+            // 4. 替换原本的链接为S3 URL
+            let updatedContent = content;
+            pathToS3UrlMap.forEach((s3Url, originalPath) => {
+                // 转义特殊字符以安全地用于正则表达式
+                const escapedPath = originalPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`!\\[.*?\\]\\(${escapedPath}\\)`, 'g');
+                updatedContent = updatedContent.replace(regex, (match) => {
+                    // 提取原始的alt文本
+                    const altText = match.match(/!\[(.*?)\]/)?.[1] || '';
+                    return `![${altText}](${s3Url})`;
+                });
+            });
+
+            console.debug(updatedContent)
+
+            return updatedContent;
+        } catch (error) {
+            console.error("上传过程中发生错误:", error);
+            showMessage("上传失败: " + error.message);
+            return null;
         }
     }
 

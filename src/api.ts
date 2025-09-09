@@ -1,13 +1,14 @@
 /**
  * Copyright (c) 2023 frostime. All rights reserved.
  * https://github.com/frostime/sy-plugin-template-vite
- * 
+ *
  * See API Document in [API.md](https://github.com/siyuan-note/siyuan/blob/master/API.md)
  * API 文档见 [API_zh_CN.md](https://github.com/siyuan-note/siyuan/blob/master/API_zh_CN.md)
  */
 
-import { fetchPost, fetchSyncPost, IWebSocketData } from "siyuan";
+import {DeleteObjectCommand, PutObjectCommand, S3Client} from '@aws-sdk/client-s3'
 
+import {fetchPost, fetchSyncPost, IWebSocketData} from "siyuan";
 
 export async function request(url: string, data: any) {
     let response: IWebSocketData = await fetchSyncPost(url, data);
@@ -27,43 +28,43 @@ export async function lsNotebooks(): Promise<IReslsNotebooks> {
 
 export async function openNotebook(notebook: NotebookId) {
     let url = '/api/notebook/openNotebook';
-    return request(url, { notebook: notebook });
+    return request(url, {notebook: notebook});
 }
 
 
 export async function closeNotebook(notebook: NotebookId) {
     let url = '/api/notebook/closeNotebook';
-    return request(url, { notebook: notebook });
+    return request(url, {notebook: notebook});
 }
 
 
 export async function renameNotebook(notebook: NotebookId, name: string) {
     let url = '/api/notebook/renameNotebook';
-    return request(url, { notebook: notebook, name: name });
+    return request(url, {notebook: notebook, name: name});
 }
 
 
 export async function createNotebook(name: string): Promise<Notebook> {
     let url = '/api/notebook/createNotebook';
-    return request(url, { name: name });
+    return request(url, {name: name});
 }
 
 
 export async function removeNotebook(notebook: NotebookId) {
     let url = '/api/notebook/removeNotebook';
-    return request(url, { notebook: notebook });
+    return request(url, {notebook: notebook});
 }
 
 
 export async function getNotebookConf(notebook: NotebookId): Promise<IResGetNotebookConf> {
-    let data = { notebook: notebook };
+    let data = {notebook: notebook};
     let url = '/api/notebook/getNotebookConf';
     return request(url, data);
 }
 
 
 export async function setNotebookConf(notebook: NotebookId, conf: NotebookConf): Promise<NotebookConf> {
-    let data = { notebook: notebook, conf: conf };
+    let data = {notebook: notebook, conf: conf};
     let url = '/api/notebook/setNotebookConf';
     return request(url, data);
 }
@@ -155,6 +156,7 @@ export async function upload(assetsDirPath: string, files: any[]): Promise<IResU
 
 // **************************************** Block ****************************************
 type DataType = "markdown" | "dom";
+
 export async function insertBlock(
     dataType: DataType, data: string,
     nextID?: BlockId, previousID?: BlockId, parentID?: BlockId
@@ -299,7 +301,9 @@ export async function sql(sql: string): Promise<any[]> {
 }
 
 export async function getBlockByID(blockId: string): Promise<Block> {
-    let sqlScript = `select * from blocks where id ='${blockId}'`;
+    let sqlScript = `select *
+                     from blocks
+                     where id = '${blockId}'`;
     let data = await sql(sqlScript);
     return data[0];
 }
@@ -318,7 +322,7 @@ export async function render(id: DocumentId, path: string): Promise<IResGetTempl
 
 export async function renderSprig(template: string): Promise<string> {
     let url = '/api/template/renderSprig';
-    return request(url, { template: template });
+    return request(url, {template: template});
 }
 
 // **************************************** File ****************************************
@@ -338,8 +342,8 @@ export async function getFile(path: string): Promise<any> {
 
 /**
  * fetchPost will secretly convert data into json, this func merely return Blob
- * @param endpoint 
- * @returns 
+ * @param endpoint
+ * @returns
  */
 export const getFileBlob = async (path: string): Promise<Blob | null> => {
     const endpoint = '/api/file/getFile'
@@ -378,7 +382,6 @@ export async function removeFile(path: string) {
 }
 
 
-
 export async function readDir(path: string): Promise<IResReadDir> {
     let data = {
         path: path
@@ -410,6 +413,7 @@ export async function exportResources(paths: string[], name: string): Promise<IR
 // **************************************** Convert ****************************************
 
 export type PandocArgs = string;
+
 export async function pandoc(args: PandocArgs[]) {
     let data = {
         args: args
@@ -475,4 +479,42 @@ export async function version(): Promise<string> {
 
 export async function currentTime(): Promise<number> {
     return request('/api/system/currentTime', {});
+}
+
+// 初始化s3客户端
+export function initS3Client(endpoint: string, accessKey: string, secretKey: string, region: string) {
+    return new S3Client({
+        region,
+        endpoint: endpoint,
+        credentials: {
+            accessKeyId: accessKey,
+            secretAccessKey: secretKey
+        },
+        forcePathStyle: true
+    })
+}
+
+export async function testS3Connection(endpoint: string, accessKey: string, secretKey: string, bucket: string, region: string) {
+    const client = initS3Client(endpoint, accessKey, secretKey, region)
+    const putObjectCommand = new PutObjectCommand({
+        Bucket: bucket,
+        Key: 'test.txt',
+        Body: 'test'
+    });
+    const deleteObjectCommand = new DeleteObjectCommand({
+        Bucket: bucket,
+        Key: 'test.txt'
+    });
+    try {
+        let response = await client.send(putObjectCommand)
+        if (response.$metadata.httpStatusCode === 200) await pushMsg("测试成功")
+        else {
+            await pushErrMsg("测试失败")
+            return
+        }
+        // 删除测试文件
+        await client.send(deleteObjectCommand)
+    } catch (e) {
+        await pushErrMsg("测试失败, 错误：" + e)
+    }
 }

@@ -1,76 +1,224 @@
 <script lang="ts">
-    import { showMessage } from "siyuan";
     import SettingPanel from "./libs/components/setting-panel.svelte";
+    import {pushErrMsg, pushMsg, testS3Connection} from "@/api";
 
-    let groups: string[] = ["🌈 Group 1", "✨ Group 2"];
+    let groups: string[] = ["🌈 s3 设置"];
     let focusGroup = groups[0];
+    let testing = false; // 添加测试状态标记
+    let panelKey = 0; // 用于强制重新渲染组件
 
-    const group1Items: ISettingItem[] = [
+    let group1Items: ISettingItem[] = [
         {
-            type: 'checkbox',
-            title: 'checkbox',
-            description: 'checkbox',
-            key: 'a',
-            value: true
+            type: 'textinput',
+            title: 'endpoint',
+            description: 'endpoint地址 (例如: https://s3.amazonaws.com 或 https://oss-cn-hangzhou.aliyuncs.com)',
+            key: 'endpoint',
+            value: '',
+            placeholder: '请输入s3的endpoint，支持AWS S3、阿里云OSS、腾讯云COS、MinIO等'
         },
         {
             type: 'textinput',
-            title: 'text',
-            description: 'This is a text',
-            key: 'b',
-            value: 'This is a text',
-            placeholder: 'placeholder'
+            title: 'accessKey',
+            description: 'accessKey (访问密钥ID)',
+            key: 'accessKey',
+            value: '',
+            placeholder: '请输入s3的accessKey'
         },
         {
-            type: 'textarea',
-            title: 'textarea',
-            description: 'This is a textarea',
-            key: 'b2',
-            value: 'This is a textarea',
-            placeholder: 'placeholder',
-            direction: 'row'
+            type: 'textinput',
+            title: 'secretKey',
+            description: 'secretKey (私有访问密钥)',
+            key: 'secretKey',
+            value: '',
+            placeholder: '请输入s3的secretKey'
         },
         {
-            type: 'select',
-            title: 'select',
-            description: 'select',
-            key: 'c',
-            value: 'x',
-            options: {
-                x: 'x',
-                y: 'y',
-                z: 'z'
-            }
-        }
-    ];
-
-    const group2Items: ISettingItem[] = [
+            type: 'textinput',
+            title: 'bucket',
+            description: '桶名称 (存储空间名称)',
+            key: 'bucket',
+            value: '',
+            placeholder: '请输入s3的bucket名称'
+        },
+        {
+            type: 'textinput',
+            title: 'region',
+            description: 'AWS区域 (可选，默认us-east-1)',
+            key: 'region',
+            value: 'us-east-1',
+            placeholder: '请输入AWS区域，如us-east-1、cn-north-1等'
+        },
         {
             type: 'button',
-            title: 'button',
-            description: 'This is a button',
-            key: 'e',
-            value: 'Click Button',
+            title: '测试连接',
+            description: '测试S3连接是否正常，包括存储桶访问性和读写权限验证',
+            key: 'test',
+            value: '',
             button: {
-                label: 'Click Me',
-                callback: () => {
-                    showMessage('Hello, world!');
+                label: testing ? "测试中..." : "测试连接",
+                callback: async () => {
+                    await testConnection();
                 }
             }
         },
         {
-            type: 'slider',
-            title: 'slider',
-            description: 'slider',
-            key: 'd',
-            value: 50,
-            slider: {
-                min: 0,
-                max: 100,
-                step: 1
+            type: 'button',
+            title: '保存',
+            description: '保存配置项',
+            key: 'save',
+            value: '',
+            button: {
+                label: '保存',
+                callback: async () => {
+                    await pushMsg('正在保存配置项...', 2000);
+                    const data = {
+                        endpoint: getValue('endpoint'),
+                        accessKey: getValue('accessKey'),
+                        secretKey: getValue('secretKey'),
+                        bucket: getValue('bucket'),
+                        region: getValue('region')
+                    }
+
+                    console.log('Saving S3 config data:', data);
+
+                    // 通过postMessage发送数据给插件保存
+                    window.parent.postMessage({
+                        cmd: 'saveS3Config',
+                        data: data
+                    }, '*');
+
+                    await pushMsg('保存成功！', 2000);
+                }
             }
         }
     ];
+
+    // 从配置项中获取当前值的辅助函数
+    function getValue(key: string): string {
+        const item = group1Items.find(item => item.key === key);
+        return item ? item.value : '';
+    }
+
+    // S3连接测试函数
+    async function testConnection() {
+        if (testing) {
+            return; // 防止重复点击
+        }
+
+        testing = true;
+
+        try {
+            // 更新按钮状态
+            const testButtonItem = group1Items.find(item => item.key === 'test');
+            if (testButtonItem) {
+                testButtonItem.button.label = "测试中...";
+                // 强制触发响应式更新
+                group1Items = [...group1Items];
+                panelKey++; // 增加key值强制重新渲染
+            }
+
+            // 获取配置值
+            const endpoint = getValue('endpoint');
+            const accessKey = getValue('accessKey');
+            const secretKey = getValue('secretKey');
+            const bucket = getValue('bucket');
+            const region = getValue('region') || 'us-east-1';
+
+            console.log('Starting S3 connection test with:', {
+                endpoint,
+                accessKey: accessKey ? '***' : '',
+                secretKey: secretKey ? '***' : '',
+                bucket,
+                region
+            });
+
+            // 基本验证
+            if (!endpoint.trim()) {
+                throw new Error('请输入endpoint地址');
+            }
+            if (!accessKey.trim()) {
+                throw new Error('请输入accessKey');
+            }
+            if (!secretKey.trim()) {
+                throw new Error('请输入secretKey');
+            }
+            if (!bucket.trim()) {
+                throw new Error('请输入bucket名称');
+            }
+
+            // 显示开始测试的消息
+            await pushMsg('开始测试S3连接...', 2000);
+
+            // 执行连接测试
+            const result = await testS3Connection(
+                endpoint.trim(),
+                accessKey.trim(),
+                secretKey.trim(),
+                bucket.trim(),
+                region.trim()
+            );
+
+            console.log('S3 connection test result:', result);
+
+        } catch (error) {
+            console.error('S3连接测试异常:', error);
+            const errorMessage = error.message || '连接测试失败: 未知错误';
+            await pushErrMsg(errorMessage, 8000);
+        } finally {
+            testing = false;
+
+            // 恢复按钮状态
+            const testButtonItem = group1Items.find(item => item.key === 'test');
+            if (testButtonItem) {
+                testButtonItem.button.label = "测试连接";
+                // 强制触发响应式更新
+                group1Items = [...group1Items];
+                panelKey++; // 增加key值强制重新渲染
+            }
+        }
+    }
+
+    // 获取S3配置状态的辅助函数
+    async function getS3ConfigStatus(): Promise<{configured: boolean, config: any}> {
+        return new Promise((resolve) => {
+            // 发送消息请求获取S3配置状态
+            window.parent.postMessage({cmd: 'getS3ConfigStatus'}, '*');
+
+            // 监听返回结果
+            const handleResponse = (event: MessageEvent) => {
+                if (event.data.cmd === 'returnS3ConfigStatus') {
+                    window.removeEventListener('message', handleResponse);
+                    resolve(event.data.data);
+                }
+            };
+
+            window.addEventListener('message', handleResponse);
+        });
+    }
+
+    // 组件加载时检查S3配置状态
+    (async () => {
+        try {
+            const status = await getS3ConfigStatus();
+            if (status.configured) {
+                // 填充配置项
+                group1Items = group1Items.map(item => {
+                    if (status.config[item.key] !== undefined) {
+                        return {
+                            ...item,
+                            value: status.config[item.key]
+                        };
+                    }
+                    return item;
+                });
+
+                panelKey++; // 增加key值强制重新渲染
+            }
+        } catch (error) {
+            // 静默处理错误，不显示给用户
+            console.log('未找到已保存的配置或加载配置时出错');
+        }
+    })();
 
     /********** Events **********/
     interface ChangeEvent {
@@ -79,11 +227,41 @@
         value: any;
     }
 
-    const onChanged = ({ detail }: CustomEvent<ChangeEvent>) => {
+    const onChanged = ({detail}: CustomEvent<ChangeEvent>) => {
         if (detail.group === groups[0]) {
+            console.log('Setting changed:', detail.key, '=', detail.value);
+
+            // 更新对应配置项的值
+            group1Items = group1Items.map(item => {
+                if (item.key === detail.key) {
+                    return {
+                        ...item,
+                        value: detail.value
+                    };
+                }
+                return item;
+            });
+
+            panelKey++; // 增加key值强制重新渲染
+
+            // 如果是测试按钮，触发相应的回调
+            if (detail.key === 'test') {
+                // 按钮点击由button.callback处理
+                return;
+            }
+
             // setting.set(detail.key, detail.value);
-            //Please add your code here
-            //Udpate the plugins setting data, don't forget to call plugin.save() for data persistence
+            // Please add your code here
+            // Update the plugins setting data, don't forget to call plugin.save() for data persistence
+        }
+    };
+
+    const onButtonClick = ({detail}: CustomEvent<{ key: string }>) => {
+        console.log('Button clicked:', detail.key);
+
+        if (detail.key === 'test') {
+            // 测试连接按钮点击事件已经由callback处理
+            // 这里可以添加额外的处理逻辑
         }
     };
 </script>
@@ -93,13 +271,13 @@
         {#each groups as group}
             <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
             <li
-                data-name="editor"
-                class:b3-list-item--focus={group === focusGroup}
-                class="b3-list-item"
-                on:click={() => {
+                    data-name="editor"
+                    class:b3-list-item--focus={group === focusGroup}
+                    class="b3-list-item"
+                    on:click={() => {
                     focusGroup = group;
                 }}
-                on:keydown={() => {}}
+                    on:keydown={() => {}}
             >
                 <span class="b3-list-item__text">{group}</span>
             </li>
@@ -107,33 +285,26 @@
     </ul>
     <div class="config__tab-wrap">
         <SettingPanel
-            group={groups[0]}
-            settingItems={group1Items}
-            display={focusGroup === groups[0]}
-            on:changed={onChanged}
-            on:click={({ detail }) => { console.debug("Click:", detail.key); }}
+                group={groups[0]}
+                settingItems={group1Items}
+                display={focusGroup === groups[0]}
+                on:changed={onChanged}
+                on:click={onButtonClick}
         >
             <div class="fn__flex b3-label">
-                💡 This is our default settings.
+                💡 s3设置.
             </div>
-        </SettingPanel>
-        <SettingPanel
-            group={groups[1]}
-            settingItems={group2Items}
-            display={focusGroup === groups[1]}
-            on:changed={onChanged}
-            on:click={({ detail }) => { console.debug("Click:", detail.key); }}
-        >
         </SettingPanel>
     </div>
 </div>
 
 <style lang="scss">
-    .config__panel {
-        height: 100%;
-    }
-    .config__panel > ul > li {
-        padding-left: 1rem;
-    }
+  .config__panel {
+    height: 100%;
+  }
+
+  .config__panel > ul > li {
+    padding-left: 1rem;
+  }
 </style>
 

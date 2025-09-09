@@ -1,7 +1,6 @@
 import {
     adaptHotkey,
     confirm,
-    Constants,
     Dialog,
     getAllEditor,
     getBackend,
@@ -16,16 +15,22 @@ import {
 import "./index.scss";
 import {IMenuItem} from "siyuan/types";
 
-import HelloExample from "@/hello.svelte";
 import SettingExample from "@/setting-example.svelte";
 
 import {SettingUtils} from "./libs/setting-utils";
-import {svelteDialog} from "./libs/dialog";
-import {exportMdContent, getFileBlob, initS3Client} from "@/api";
+import {exportMdContent, getFileBlob, initS3Client, pushErrMsg} from "@/api";
 import {PutObjectCommand} from "@aws-sdk/client-s3";
 
 const STORAGE_NAME = "menu-config";
 const DOCK_TYPE = "dock_tab";
+
+import axios from 'axios';
+const axios_plus = axios.create({
+    timeout: 10000,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
 
 function getFilePathsFromMd(content: string) {
 
@@ -55,6 +60,49 @@ export default class PluginSample extends Plugin {
             }
         });
         return toolbar;
+    }
+
+    async get_active_page() {
+        const i18n = this.i18n;
+
+        // 获取当前页的ID
+        const url = "api/system/getConf"
+
+        let data = "{}"
+        let active_page_list: IConfActivePage = {
+            children: [],
+            height: "",
+            instance: "",
+            width: ""
+        }
+        // 设置headers
+        let headers = {}
+        headers['Content-Type'] = 'application/json'
+
+        return axios_plus.post(url, data, headers)
+            .then(function (response) {
+                active_page_list = response.data.data.conf.uiLayout.layout.children[0].children[1].children[0]
+
+                for (let i = 0; i < active_page_list.children.length; i++) {
+                    if (active_page_list.children[i].active == true) {
+                        let id = active_page_list.children[i].children.blockId;
+                        if (id == "") {
+                            pushErrMsg(i18n.error_no_active_page)
+                            console.error(i18n.error_no_active_page);
+                            return ""
+                        }
+                        return active_page_list.children[i].children.blockId
+                    }
+                }
+                pushErrMsg(i18n.error_no_active_page)
+                console.error(i18n.error_no_active_page);
+                return ""
+
+            })
+            .catch(function (error) {
+                console.error(error);
+                return ""
+            });
     }
 
     async onload() {
@@ -131,13 +179,6 @@ export default class PluginSample extends Plugin {
 <path d="M20 13.333c0-0.733 0.6-1.333 1.333-1.333s1.333 0.6 1.333 1.333c0 0.733-0.6 1.333-1.333 1.333s-1.333-0.6-1.333-1.333zM10.667 12h6.667v-2.667h-6.667v2.667zM29.333 10v9.293l-3.76 1.253-2.24 7.453h-7.333v-2.667h-2.667v2.667h-7.333c0 0-3.333-11.28-3.333-15.333s3.28-7.333 7.333-7.333h6.667c1.213-1.613 3.147-2.667 5.333-2.667 1.107 0 2 0.893 2 2 0 0.28-0.053 0.533-0.16 0.773-0.187 0.453-0.347 0.973-0.427 1.533l3.027 3.027h2.893zM26.667 12.667h-1.333l-4.667-4.667c0-0.867 0.12-1.72 0.347-2.547-1.293 0.333-2.347 1.293-2.787 2.547h-8.227c-2.573 0-4.667 2.093-4.667 4.667 0 2.507 1.627 8.867 2.68 12.667h2.653v-2.667h8v2.667h2.68l2.067-6.867 3.253-1.093v-4.707z"></path>
 </symbol>`);
         document.createElement("div");
-        this.addCommand({
-            langKey: "showDialog",
-            hotkey: "⇧⌘O",
-            callback: () => {
-                this.showDialog();
-            },
-        });
 
         this.addCommand({
             langKey: "getTab",
@@ -495,23 +536,6 @@ export default class PluginSample extends Plugin {
             config.bucket;
     }
 
-    private showDialog() {
-        const docId = this.getEditor().protyle.block.rootID;
-        svelteDialog({
-            title: `SiYuan ${Constants.SIYUAN_VERSION}`,
-            width: this.isMobile ? "92vw" : "720px",
-            constructor: (container: HTMLElement) => {
-                return new HelloExample({
-                    target: container,
-                    props: {
-                        app: this.app,
-                        blockID: docId
-                    }
-                });
-            }
-        });
-    }
-
     private addMenu(rect?: DOMRect) {
         const menu = new Menu("topBarSample", () => {
             console.log(this.i18n.byeMenu);
@@ -527,8 +551,9 @@ export default class PluginSample extends Plugin {
         menu.addItem({
             icon: "iconCopy",
             label: "导出md文件到剪切板",
-            click: () => {
-                const docId = this.getEditor().protyle.block.rootID;
+            click: async () => {
+                // 获取当前聚焦的id
+                const docId = await this.get_active_page();
                 exportMdContent(docId).then(async res => {
                     const processedContent = await this.processMarkdownContent(res.content);
                     if (processedContent) {
@@ -542,8 +567,8 @@ export default class PluginSample extends Plugin {
         menu.addItem({
             icon: "iconFile",
             label: "导出md文件",
-            click: () => {
-                const docId = this.getEditor().protyle.block.rootID;
+            click: async () => {
+                const docId = await this.get_active_page()
                 exportMdContent(docId).then(async res => {
                     const processedContent = await this.processMarkdownContent(res.content);
                     if (processedContent) {
@@ -594,7 +619,7 @@ export default class PluginSample extends Plugin {
                 this.openSetting();
                 return null;
             }
-            
+
             // 2. 获取所有链接中的文件
             const filePaths = getFilePathsFromMd(content);
             // 3. 上传到s3
@@ -635,7 +660,7 @@ export default class PluginSample extends Plugin {
                     const s3Url = `${endpoint}/${bucket}/${s3Key}`;
                     pathToS3UrlMap.set(item, s3Url);
 
-                    console.log(`文件 ${item} 已上传到 ${s3Url}`);
+                    // console.log(`文件 ${item} 已上传到 ${s3Url}`);
                 } catch (error) {
                     console.error(`上传文件 ${item} 失败:`, error);
                 }
@@ -666,13 +691,24 @@ export default class PluginSample extends Plugin {
             return null;
         }
     }
+}
 
-    private getEditor() {
-        const editors = getAllEditor();
-        if (editors.length === 0) {
-            showMessage("please open doc first");
-            return;
-        }
-        return editors[0];
-    }
+interface Children {
+    active: boolean;
+    children: Children;
+    docIcon: string;
+    instance: string;
+    pin: boolean;
+    title: string;
+    action: string;
+    blockId: string;
+    mode: string;
+    notebookId: string;
+    rootId: string;
+}
+interface IConfActivePage {
+    children: Children[];
+    height: string;
+    instance: string;
+    width: string;
 }

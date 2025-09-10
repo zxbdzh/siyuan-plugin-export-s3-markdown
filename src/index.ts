@@ -594,6 +594,17 @@ export default class PluginSample extends Plugin {
                 });
             }
         });
+        menu.addItem({
+            icon: "iconUpload",
+            label: "仅上传图床",
+            click: async () => {
+                // 获取当前聚焦的id
+                const docId = await this.get_active_page();
+                exportMdContent(docId).then(async res => {
+                    await this.processMarkdownContent(res.content);
+                });
+            }
+        });
 
         if (this.isMobile) {
             menu.fullscreen();

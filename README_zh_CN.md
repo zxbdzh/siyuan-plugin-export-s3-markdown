@@ -1,4 +1,5 @@
-
+使用教程：
+[bilibili](https://b23.tv/WTEFxxz)
 # 使用 vite + svelte 的思源笔记插件示例
 
 [English](./README.md)

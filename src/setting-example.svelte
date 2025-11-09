@@ -34,7 +34,7 @@
         },
         {
             type: 'textinput',
-            title: 'bucket',
+            title: '桶',
             description: '桶名称 (存储空间名称)',
             key: 'bucket',
             value: '',
@@ -42,11 +42,27 @@
         },
         {
             type: 'textinput',
-            title: 'region',
+            title: 'aws区域',
             description: 'AWS区域 (可选，默认us-east-1)',
             key: 'region',
             value: 'us-east-1',
             placeholder: '请输入AWS区域，如us-east-1、cn-north-1等'
+        },
+        {
+            type: 'textarea',
+            title: '版权前缀',
+            description: '版权前缀(可留空，显示自定义内容在导出markdown最上方)',
+            key: 'mdPrefix',
+            value: '',
+            placeholder: '请输入mdPrefix',
+        },
+        {
+            type: 'textarea',
+            title: '版权后缀',
+            description: '版权后缀(可留空，显示自定义内容在导出markdown最下方)',
+            key: 'mdSuffix',
+            value: '',
+            placeholder: '请输入mdSuffix',
         },
         {
             type: 'button',
@@ -76,7 +92,9 @@
                         accessKey: getValue('accessKey'),
                         secretKey: getValue('secretKey'),
                         bucket: getValue('bucket'),
-                        region: getValue('region')
+                        region: getValue('region'),
+                        mdPrefix: getValue('mdPrefix'),
+                        mdSuffix: getValue('mdSuffix')
                     }
 
                     console.log('Saving S3 config data:', data);
@@ -123,13 +141,17 @@
             const secretKey = getValue('secretKey');
             const bucket = getValue('bucket');
             const region = getValue('region') || 'us-east-1';
+            const mdPrefix = getValue('mdPrefix');
+            const mdSuffix = getValue('mdSuffix');
 
             console.log('Starting S3 connection test with:', {
                 endpoint,
                 accessKey: accessKey ? '***' : '',
                 secretKey: secretKey ? '***' : '',
                 bucket,
-                region
+                region,
+                mdPrefix,
+                mdSuffix
             });
 
             // 基本验证
@@ -179,7 +201,7 @@
     }
 
     // 获取S3配置状态的辅助函数
-    async function getS3ConfigStatus(): Promise<{configured: boolean, config: any}> {
+    async function getS3ConfigStatus(): Promise<{ configured: boolean, config: any }> {
         return new Promise((resolve) => {
             // 发送消息请求获取S3配置状态
             window.parent.postMessage({cmd: 'getS3ConfigStatus'}, '*');
@@ -306,5 +328,13 @@
   .config__panel > ul > li {
     padding-left: 1rem;
   }
-</style>
 
+   .config__panel :global(textarea) {
+     width: 45% !important;
+     min-height: 50px;         // 最小高度
+     max-height: 70px;        // 最大高度
+     overflow-y: auto;         // 垂直滚动条
+     resize: vertical;         // 允许垂直调整大小
+     white-space: pre-wrap;    // 保持换行符
+   }
+   </style>

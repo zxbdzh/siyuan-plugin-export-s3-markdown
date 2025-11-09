@@ -2,7 +2,6 @@ import {
     adaptHotkey,
     confirm,
     Dialog,
-    getAllEditor,
     getBackend,
     getFrontend,
     ICard,
@@ -20,11 +19,12 @@ import SettingExample from "@/setting-example.svelte";
 import {SettingUtils} from "./libs/setting-utils";
 import {exportMdContent, getFileBlob, initS3Client, pushErrMsg} from "@/api";
 import {PutObjectCommand} from "@aws-sdk/client-s3";
+import axios from 'axios';
+import JSZip from "jszip";
 
 const STORAGE_NAME = "menu-config";
 const DOCK_TYPE = "dock_tab";
 
-import axios from 'axios';
 const axios_plus = axios.create({
     timeout: 10000,
     headers: {
@@ -35,8 +35,7 @@ const axios_plus = axios.create({
 function getFilePathsFromMd(content: string) {
 
     return content.match(/!\[.*?]\((.*?)\)/g)?.map(match => {
-        const filePath = match.match(/\((.*?)\)/)[1];
-        return filePath;
+        return match.match(/\((.*?)\)/)[1];
     }) ?? [];
 
 }
@@ -108,10 +107,10 @@ export default class PluginSample extends Plugin {
     async onload() {
         this.data[STORAGE_NAME] = {readonlyText: "Readonly"};
 
-        console.log("loading plugin-sample", this.i18n);
-
         const frontEnd = getFrontend();
         this.isMobile = frontEnd === "mobile" || frontEnd === "browser-mobile";
+
+        this.eventBus.on("open-menu-doctree", this.doctreeMenuEventListener);
 
         // 监听来自Svelte组件的消息
         const handleMessage = async (event: MessageEvent) => {
@@ -163,6 +162,7 @@ export default class PluginSample extends Plugin {
         // 在插件卸载时清理事件监听器
         const originalOnunload = this.onunload;
         this.onunload = async () => {
+            this.eventBus.off("open-menu-doctree", this.doctreeMenuEventListener);
             window.removeEventListener('message', handleMessage);
             if (originalOnunload) {
                 await originalOnunload.call(this);
@@ -536,6 +536,169 @@ export default class PluginSample extends Plugin {
             config.bucket;
     }
 
+    /* 文档树菜单弹出事件监听器 */
+    protected readonly doctreeMenuEventListener = (e: IOpenMenuDocTreeEvent) => {
+        // this.logger.debug(e);
+
+        const submenu: siyuan.IMenuItemOption[] = [];
+        switch (e.detail.type) {
+            case "doc": { // 单文档
+                const id = e.detail.elements.item(0)?.dataset?.nodeId;
+
+                if (id) {
+                    submenu.push(
+                        {
+                            icon: "iconCopy",
+                            label: "导出md文件到剪切板",
+                            click: async () => {
+                                // 获取当前聚焦的id
+                                exportMdContent(id).then(async res => {
+                                    const processedContent = await this.processMarkdownContent(res.content);
+                                    if (processedContent) {
+                                        // 复制到剪切板
+                                        await navigator.clipboard.writeText(processedContent);
+                                        showMessage("已复制到剪切板");
+                                    }
+                                });
+                            }
+                        },
+                        {
+                            icon: "iconFile",
+                            label: "导出md文件",
+                            click: async () => {
+                                exportMdContent(id).then(async res => {
+                                    const processedContent = await this.processMarkdownContent(res.content);
+                                    if (processedContent) {
+                                        // 系统弹窗保存位置
+                                        const blob = new Blob([processedContent], {type: 'text/markdown;charset=utf-8'});
+                                        const url = URL.createObjectURL(blob);
+
+                                        // 创建下载链接
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = `export-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.md`;
+                                        document.body.appendChild(a);
+                                        a.click();
+
+                                        // 清理
+                                        setTimeout(() => {
+                                            document.body.removeChild(a);
+                                            URL.revokeObjectURL(url);
+                                        }, 100);
+
+                                        showMessage("文件已下载");
+                                    }
+                                });
+                            }
+                        },
+                        {
+                            icon: "iconUpload",
+                            label: "仅上传图床",
+                            click: async () => {
+                                exportMdContent(id).then(async res => {
+                                    await this.processMarkdownContent(res.content);
+                                });
+                            }
+                        }
+                    )
+                }
+                break;
+            }
+            case "docs": { // 多文档
+                const ids: string[] = [];
+                // 遍历所有选中的元素
+                for (let i = 0; i < e.detail.elements.length; i++) {
+                    const element = e.detail.elements.item(i);
+                    if (element && element.dataset.nodeId) {
+                        ids.push(element.dataset.nodeId);
+                    }
+                }
+
+                if (ids.length > 0) {
+                    submenu.push({
+                        icon: "iconFile",
+                        label: "批量导出为ZIP",
+                        click: async () => {
+                            try {
+                                // 动态导入JSZip
+                                // const JSZip = (await import('jszip')).default;
+                                const zip = new JSZip();
+
+                                let successCount = 0;
+                                const processedContents: { filename: string; content: string }[] = [];
+
+                                // 处理每个文档
+                                for (const id of ids) {
+                                    try {
+                                        const res = await exportMdContent(id);
+                                        const processedContent = await this.processMarkdownContent(res.content);
+                                        if (processedContent) {
+// 修改为:
+                                            let filename = `${id}.md`; // 默认使用ID作为文件名
+                                            try {
+                                                // 尝试获取文档标题
+                                                const response = await axios_plus.post('/api/block/getBlockInfo', {
+                                                    id: id
+                                                });
+                                                if (response.data && response.data.data) {
+                                                    const title = response.data.data.rootTitle || response.data.data.name || id;
+                                                    // 清理文件名中的非法字符
+                                                    filename = `${title.replace(/[/\\?%*:|"<>]/g, '-')}.md`;
+                                                }
+                                            } catch (error) {
+                                                console.warn('获取文档标题失败，使用默认文件名:', error);
+                                            }
+                                            processedContents.push({filename, content: processedContent});
+                                            successCount++;
+                                        }
+                                    } catch (error) {
+                                        console.error(`处理文档 ${id} 失败:`, error);
+                                    }
+                                }
+
+                                // 将所有内容添加到zip中
+                                processedContents.forEach(({filename, content}) => {
+                                    zip.file(filename, content);
+                                });
+
+                                // 生成zip文件并下载
+                                const blob = await zip.generateAsync({type: 'blob'});
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a');
+                                a.href = url;
+                                a.download = `export-batch-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.zip`;
+                                document.body.appendChild(a);
+                                a.click();
+
+                                // 清理
+                                setTimeout(() => {
+                                    document.body.removeChild(a);
+                                    URL.revokeObjectURL(url);
+                                }, 100);
+
+                                showMessage(`批量导出完成 (${successCount}/${ids.length})，已打包为ZIP文件`);
+                            } catch (error) {
+                                console.error('ZIP打包失败:', error);
+                                showMessage('ZIP打包失败: ' + error.message);
+                            }
+                        }
+                    });
+                }
+                break;
+            }
+            default:
+                break;
+        }
+
+        if (submenu.length > 0) {
+            e.detail.menu.addItem({
+                icon: "iconCode",
+                label: this.displayName,
+                submenu,
+            });
+        }
+    }
+
     private addMenu(rect?: DOMRect) {
         const menu = new Menu("topBarSample", () => {
             console.log(this.i18n.byeMenu);
@@ -622,6 +785,11 @@ export default class PluginSample extends Plugin {
      * @param content 原始Markdown内容
      * @returns 处理后的Markdown内容，如果出错则返回null
      */
+    /**
+     * 处理Markdown内容，上传其中的图片到S3并更新链接
+     * @param content 原始Markdown内容
+     * @returns 处理后的Markdown内容，如果出错则返回null
+     */
     private async processMarkdownContent(content: string): Promise<string | null> {
         try {
             // 1. 检查是否配置s3
@@ -631,10 +799,13 @@ export default class PluginSample extends Plugin {
                 return null;
             }
 
+            // 删除front matter (--- title, date, lastmod ---)
+            let processedContent = content.replace(/^---\s*\ntitle:.*?\nlastmod:.*?\n---\s*\n/gs, '');
+
             // 2. 获取所有链接中的文件
-            const filePaths = getFilePathsFromMd(content);
+            const filePaths = getFilePathsFromMd(processedContent);
             // 3. 上传到s3
-            const {endpoint, accessKey, secretKey, bucket, region} = this.getS3Config();
+            const {endpoint, accessKey, secretKey, bucket, region, mdPrefix, mdSuffix} = this.getS3Config();
             const client = initS3Client(endpoint, accessKey, secretKey, region || 'us-east-1');
 
             // 创建path到S3 URL的映射
@@ -644,7 +815,9 @@ export default class PluginSample extends Plugin {
             const uploadPromises = filePaths.map(async (item) => {
                 try {
                     // 有空格%20就修改为空格
-                    item = item.replace(/%20/g, ' ');
+                    if (item.includes('%20')) {
+                        item.replace(/%20/g, ' ')
+                    }
                     // 获取Blob
                     const fileData = await getFileBlob('/data/' + item);
                     const fileDataBuffer = new Uint8Array(await fileData.arrayBuffer())
@@ -681,7 +854,7 @@ export default class PluginSample extends Plugin {
             showMessage("文件上传完成！");
 
             // 4. 替换原本的链接为S3 URL
-            let updatedContent = content;
+            let updatedContent = processedContent;
             pathToS3UrlMap.forEach((s3Url, originalPath) => {
                 // 转义特殊字符以安全地用于正则表达式
                 const escapedPath = originalPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -694,6 +867,11 @@ export default class PluginSample extends Plugin {
             });
 
             console.debug(updatedContent)
+
+            // 如果有前缀或后缀，再最上或最下方添加
+            if (mdPrefix) updatedContent = mdPrefix + '\n' + updatedContent;
+            if (mdSuffix) updatedContent = updatedContent + '\n' + mdSuffix;
+            console.log(updatedContent)
 
             return updatedContent;
         } catch (error) {
@@ -717,6 +895,7 @@ interface Children {
     notebookId: string;
     rootId: string;
 }
+
 interface IConfActivePage {
     children: Children[];
     height: string;

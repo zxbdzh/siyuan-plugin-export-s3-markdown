@@ -2,7 +2,7 @@
   "name": "siyuan-plugin-export-s3-markdown",
   "author": "zxb",
   "url": "https://github.com/zxbdzh/siyuan-plugin-export-s3-markdown",
-  "version": "0.0.1",
+  "version": "1.0.1",
   "minAppVersion": "3.2.1",
   "backends": [
     "windows",

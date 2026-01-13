@@ -11,7 +11,7 @@
         {
             type: 'textinput',
             title: 'endpoint',
-            description: 'endpoint地址 (例如: https://s3.amazonaws.com 或 https://oss-cn-hangzhou.aliyuncs.com)',
+            description: 'endpoint地址 (例如: https://s3.amazonaws.com 或 http://域名.oss-cn-beijing.aliyuncs.com),暂只支持虚拟机主机格式',
             key: 'endpoint',
             value: '',
             placeholder: '请输入s3的endpoint，支持AWS S3、阿里云OSS、腾讯云COS、MinIO等'

@@ -1,10 +1,11 @@
 <script lang="ts">
     import SettingPanel from "./libs/components/setting-panel.svelte";
-    import {pushErrMsg, pushMsg, testS3Connection} from "@/api";
+    import {pushErrMsg, pushMsg, testS3Connection, testPicListConnection} from "@/api";
 
-    let groups: string[] = ["🌈 s3 设置"];
+    let groups: string[] = ["🌈 s3 设置", "🌈 PicList 设置", "🔧 上传方式选择"];
     let focusGroup = groups[0];
     let testing = false; // 添加测试状态标记
+    let piclistTesting = false; // PicList测试状态标记
     let panelKey = 0; // 用于强制重新渲染组件
 
     let group1Items: ISettingItem[] = [
@@ -68,25 +69,25 @@
             type: 'button',
             title: '测试连接',
             description: '测试S3连接是否正常，包括存储桶访问性和读写权限验证',
-            key: 'test',
+            key: 'testS3',
             value: '',
             button: {
                 label: testing ? "测试中..." : "测试连接",
                 callback: async () => {
-                    await testConnection();
+                    await testS3ConnectionCall();
                 }
             }
         },
         {
             type: 'button',
             title: '保存',
-            description: '保存配置项',
-            key: 'save',
+            description: '保存S3配置项',
+            key: 'saveS3',
             value: '',
             button: {
-                label: '保存',
+                label: '保存S3配置',
                 callback: async () => {
-                    await pushMsg('正在保存配置项...', 2000);
+                    await pushMsg('正在保存S3配置项...', 2000);
                     const data = {
                         endpoint: getValue('endpoint'),
                         accessKey: getValue('accessKey'),
@@ -105,7 +106,122 @@
                         data: data
                     }, '*');
 
-                    await pushMsg('保存成功！', 2000);
+                    await pushMsg('S3配置保存成功！', 2000);
+                }
+            }
+        }
+    ];
+
+    let group2Items: ISettingItem[] = [
+        {
+            type: 'textinput',
+            title: 'PicList服务器地址',
+            description: 'PicList内置HTTP服务器地址 (例如: http://127.0.0.1:36677)',
+            key: 'piclistServerUrl',
+            value: 'http://127.0.0.1:36677',
+            placeholder: '请输入PicList服务器地址'
+        },
+        {
+            type: 'textinput',
+            title: 'API密钥 (可选)',
+            description: '如果PicList服务器启用了鉴权，请输入API密钥',
+            key: 'piclistApiKey',
+            value: '',
+            placeholder: '请输入API密钥，无则留空'
+        },
+        {
+            type: 'textinput',
+            title: '上传字段名',
+            description: 'HTTP表单上传时使用的文件字段名 (默认: image)',
+            key: 'piclistFileField',
+            value: 'image',
+            placeholder: '默认为 image'
+        },
+        {
+            type: 'textarea',
+            title: '版权前缀',
+            description: '版权前缀(可留空，显示自定义内容在导出markdown最上方)',
+            key: 'piclistMdPrefix',
+            value: '',
+            placeholder: '请输入mdPrefix',
+        },
+        {
+            type: 'textarea',
+            title: '版权后缀',
+            description: '版权后缀(可留空，显示自定义内容在导出markdown最下方)',
+            key: 'piclistMdSuffix',
+            value: '',
+            placeholder: '请输入mdSuffix',
+        },
+        {
+            type: 'button',
+            title: '测试连接',
+            description: '测试PicList服务器连接是否正常',
+            key: 'testPiclist',
+            value: '',
+            button: {
+                label: piclistTesting ? "测试中..." : "测试连接",
+                callback: async () => {
+                    await testPicListConnectionCall();
+                }
+            }
+        },
+        {
+            type: 'button',
+            title: '保存',
+            description: '保存PicList配置项',
+            key: 'savePiclist',
+            value: '',
+            button: {
+                label: '保存PicList配置',
+                callback: async () => {
+                    await pushMsg('正在保存PicList配置项...', 2000);
+                    const data = {
+                        piclistServerUrl: getValueFromGroup('piclistServerUrl', group2Items),
+                        piclistApiKey: getValueFromGroup('piclistApiKey', group2Items),
+                        piclistFileField: getValueFromGroup('piclistFileField', group2Items),
+                        piclistMdPrefix: getValueFromGroup('piclistMdPrefix', group2Items),
+                        piclistMdSuffix: getValueFromGroup('piclistMdSuffix', group2Items)
+                    }
+
+                    console.log('Saving PicList config data:', data);
+
+                    // 通过postMessage发送数据给插件保存
+                    window.parent.postMessage({
+                        cmd: 'savePiclistConfig',
+                        data: data
+                    }, '*');
+
+                    await pushMsg('PicList配置保存成功！', 2000);
+                }
+            }
+        }
+    ];
+
+    let group3Items: ISettingItem[] = [
+        {
+            type: 'select',
+            title: '上传方式',
+            description: '选择图片上传方式',
+            key: 'uploadMethod',
+            value: 's3', // 默认使用S3
+            options: {
+                's3': '使用S3上传',
+                'piclist': '使用PicList上传'
+            },
+            button: {
+                label: '保存',
+                callback: async () => {
+                    await pushMsg('正在保存上传方式选择...', 2000);
+                    const uploadMethod = getValueFromGroup('uploadMethod', group3Items);
+
+                    // 通过postMessage发送数据给插件保存
+                    window.parent.postMessage({
+                        cmd: 'saveUploadMethod',
+                        data: { uploadMethod: uploadMethod }
+                    }, '*');
+
+                    await pushMsg('上传方式保存成功！', 2000);
                 }
             }
         }
@@ -117,8 +233,14 @@
         return item ? item.value : '';
     }
 
+    // 从指定组中获取配置值的辅助函数
+    function getValueFromGroup(key: string, group: ISettingItem[]): string {
+        const item = group.find(item => item.key === key);
+        return item ? item.value : '';
+    }
+
     // S3连接测试函数
-    async function testConnection() {
+    async function testS3ConnectionCall() {
         if (testing) {
             return; // 防止重复点击
         }
@@ -127,7 +249,7 @@
 
         try {
             // 更新按钮状态
-            const testButtonItem = group1Items.find(item => item.key === 'test');
+            const testButtonItem = group1Items.find(item => item.key === 'testS3');
             if (testButtonItem) {
                 testButtonItem.button.label = "测试中...";
                 // 强制触发响应式更新
@@ -172,15 +294,13 @@
             await pushMsg('开始测试S3连接...', 2000);
 
             // 执行连接测试
-            const result = await testS3Connection(
+            await testS3Connection(
                 endpoint.trim(),
                 accessKey.trim(),
                 secretKey.trim(),
                 bucket.trim(),
                 region.trim()
             );
-
-            console.log('S3 connection test result:', result);
 
         } catch (error) {
             console.error('S3连接测试异常:', error);
@@ -190,11 +310,67 @@
             testing = false;
 
             // 恢复按钮状态
-            const testButtonItem = group1Items.find(item => item.key === 'test');
+            const testButtonItem = group1Items.find(item => item.key === 'testS3');
             if (testButtonItem) {
                 testButtonItem.button.label = "测试连接";
                 // 强制触发响应式更新
                 group1Items = [...group1Items];
+                panelKey++; // 增加key值强制重新渲染
+            }
+        }
+    }
+
+    // PicList连接测试函数
+    async function testPicListConnectionCall() {
+        if (piclistTesting) {
+            return; // 防止重复点击
+        }
+
+        piclistTesting = true;
+
+        try {
+            // 更新按钮状态
+            const testButtonItem = group2Items.find(item => item.key === 'testPiclist');
+            if (testButtonItem) {
+                testButtonItem.button.label = "测试中...";
+                // 强制触发响应式更新
+                group2Items = [...group2Items];
+                panelKey++; // 增加key值强制重新渲染
+            }
+
+            // 获取配置值
+            const serverUrl = getValueFromGroup('piclistServerUrl', group2Items);
+            const apiKey = getValueFromGroup('piclistApiKey', group2Items);
+
+            console.log('Starting PicList connection test with:', {
+                serverUrl,
+                apiKey: apiKey ? '***' : ''
+            });
+
+            // 基本验证
+            if (!serverUrl.trim()) {
+                throw new Error('请输入PicList服务器地址');
+            }
+
+            // 显示开始测试的消息
+            await pushMsg('开始测试PicList连接...', 2000);
+
+            // 执行连接测试
+            await testPicListConnection(serverUrl.trim(), apiKey.trim() || undefined);
+
+        } catch (error) {
+            console.error('PicList连接测试异常:', error);
+            const errorMessage = error.message || '连接测试失败: 未知错误';
+            await pushErrMsg(errorMessage, 8000);
+        } finally {
+            piclistTesting = false;
+
+            // 恢复按钮状态
+            const testButtonItem = group2Items.find(item => item.key === 'testPiclist');
+            if (testButtonItem) {
+                testButtonItem.button.label = "测试连接";
+                // 强制触发响应式更新
+                group2Items = [...group2Items];
                 panelKey++; // 增加key值强制重新渲染
             }
         }
@@ -218,17 +394,88 @@
         });
     }
 
-    // 组件加载时检查S3配置状态
+    // 获取PicList配置状态的辅助函数
+    async function getPicListConfigStatus(): Promise<{ configured: boolean, config: any }> {
+        return new Promise((resolve) => {
+            // 发送消息请求获取PicList配置状态
+            window.parent.postMessage({cmd: 'getPicListConfigStatus'}, '*');
+
+            // 监听返回结果
+            const handleResponse = (event: MessageEvent) => {
+                if (event.data.cmd === 'returnPicListConfigStatus') {
+                    window.removeEventListener('message', handleResponse);
+                    resolve(event.data.data);
+                }
+            };
+
+            window.addEventListener('message', handleResponse);
+        });
+    }
+
+    // 获取上传方式配置状态的辅助函数
+    async function getUploadMethodStatus(): Promise<{ uploadMethod: string }> {
+        return new Promise((resolve) => {
+            // 发送消息请求获取上传方式配置状态
+            window.parent.postMessage({cmd: 'getUploadMethodStatus'}, '*');
+
+            // 监听返回结果
+            const handleResponse = (event: MessageEvent) => {
+                if (event.data.cmd === 'returnUploadMethodStatus') {
+                    window.removeEventListener('message', handleResponse);
+                    resolve(event.data.data);
+                }
+            };
+
+            window.addEventListener('message', handleResponse);
+        });
+    }
+
+// 组件加载时检查配置状态
     (async () => {
         try {
-            const status = await getS3ConfigStatus();
-            if (status.configured) {
-                // 填充配置项
+            // 检查S3配置状态
+            const s3Status = await getS3ConfigStatus();
+            if (s3Status.configured && s3Status.config) {
+                // 填充S3配置项
                 group1Items = group1Items.map(item => {
-                    if (status.config[item.key] !== undefined) {
+                    if (s3Status.config && s3Status.config[item.key] !== undefined) {
                         return {
                             ...item,
-                            value: status.config[item.key]
+                            value: s3Status.config[item.key]
+                        };
+                    }
+                    return item;
+                });
+
+                panelKey++; // 增加key值强制重新渲染
+            }
+
+            // 检查PicList配置状态
+            const piclistStatus = await getPicListConfigStatus();
+            if (piclistStatus.configured && piclistStatus.config) {
+                // 填充PicList配置项
+                group2Items = group2Items.map(item => {
+                    if (piclistStatus.config && piclistStatus.config[item.key] !== undefined) {
+                        return {
+                            ...item,
+                            value: piclistStatus.config[item.key]
+                        };
+                    }
+                    return item;
+                });
+
+                panelKey++; // 增加key值强制重新渲染
+            }
+
+            // 检查上传方式配置状态
+            const uploadMethodStatus = await getUploadMethodStatus();
+            if (uploadMethodStatus && uploadMethodStatus.uploadMethod) {
+                // 填充上传方式配置项
+                group3Items = group3Items.map(item => {
+                    if (item.key === 'uploadMethod') {
+                        return {
+                            ...item,
+                            value: uploadMethodStatus.uploadMethod
                         };
                     }
                     return item;
@@ -238,7 +485,7 @@
             }
         } catch (error) {
             // 静默处理错误，不显示给用户
-            console.log('未找到已保存的配置或加载配置时出错');
+            console.log('未找到已保存的配置或加载配置时出错', error);
         }
     })();
 
@@ -250,8 +497,8 @@
     }
 
     const onChanged = ({detail}: CustomEvent<ChangeEvent>) => {
-        if (detail.group === groups[0]) {
-            console.log('Setting changed:', detail.key, '=', detail.value);
+        if (detail.group === groups[0]) { // S3设置
+            console.log('S3 Setting changed:', detail.key, '=', detail.value);
 
             // 更新对应配置项的值
             group1Items = group1Items.map(item => {
@@ -267,22 +514,70 @@
             panelKey++; // 增加key值强制重新渲染
 
             // 如果是测试按钮，触发相应的回调
-            if (detail.key === 'test') {
+            if (detail.key === 'testS3') {
                 // 按钮点击由button.callback处理
                 return;
             }
 
-            // setting.set(detail.key, detail.value);
-            // Please add your code here
-            // Update the plugins setting data, don't forget to call plugin.save() for data persistence
+        } else if (detail.group === groups[1]) { // PicList设置
+            console.log('PicList Setting changed:', detail.key, '=', detail.value);
+
+            // 更新对应配置项的值
+            group2Items = group2Items.map(item => {
+                if (item.key === detail.key) {
+                    return {
+                        ...item,
+                        value: detail.value
+                    };
+                }
+                return item;
+            });
+
+            panelKey++; // 增加key值强制重新渲染
+
+            // 如果是测试按钮，触发相应的回调
+            if (detail.key === 'testPiclist') {
+                // 按钮点击由button.callback处理
+                return;
+            }
+
+} else if (detail.group === groups[2]) { // 上传方式选择
+            console.log('Upload Method Setting changed:', detail.key, '=', detail.value);
+
+            // 更新对应配置项的值
+            group3Items = group3Items.map(item => {
+                if (item.key === detail.key) {
+                    return {
+                        ...item,
+                        value: detail.value
+                    };
+                }
+                return item;
+            });
+
+            panelKey++; // 增加key值强制重新渲染
+
+            // 立即保存上传方式选择配置
+            const uploadMethod = detail.value;
+            window.parent.postMessage({
+                cmd: 'saveUploadMethod',
+                data: { uploadMethod: uploadMethod }
+            }, '*');
         }
+
+        // setting.set(detail.key, detail.value);
+        // Please add your code here
+        // Update the plugins setting data, don't forget to call plugin.save() for data persistence
     };
 
     const onButtonClick = ({detail}: CustomEvent<{ key: string }>) => {
         console.log('Button clicked:', detail.key);
 
-        if (detail.key === 'test') {
-            // 测试连接按钮点击事件已经由callback处理
+        if (detail.key === 'testS3') {
+            // S3测试连接按钮点击事件已经由callback处理
+            // 这里可以添加额外的处理逻辑
+        } else if (detail.key === 'testPiclist') {
+            // PicList测试连接按钮点击事件已经由callback处理
             // 这里可以添加额外的处理逻辑
         }
     };
@@ -315,6 +610,28 @@
         >
             <div class="fn__flex b3-label">
                 💡 s3设置.
+            </div>
+        </SettingPanel>
+        <SettingPanel
+                group={groups[1]}
+                settingItems={group2Items}
+                display={focusGroup === groups[1]}
+                on:changed={onChanged}
+                on:click={onButtonClick}
+        >
+            <div class="fn__flex b3-label">
+                💡 PicList设置.
+            </div>
+        </SettingPanel>
+        <SettingPanel
+                group={groups[2]}
+                settingItems={group3Items}
+                display={focusGroup === groups[2]}
+                on:changed={onChanged}
+                on:click={onButtonClick}
+        >
+            <div class="fn__flex b3-label">
+                💡 上传方式选择.
             </div>
         </SettingPanel>
     </div>

@@ -10,3 +10,4 @@ dist
 build
 tmp
 bun.lock
+scripts/make_dev_link.js

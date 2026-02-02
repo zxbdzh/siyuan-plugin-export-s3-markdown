@@ -18,11 +18,14 @@ import SettingExample from "@/setting-example.svelte";
 
 import { SettingUtils } from "./libs/setting-utils";
 import {
+  copyHtml,
   exportMdContent,
   getFileBlob,
   initS3Client,
   pushErrMsg,
   uploadToPicList,
+  renderBmMd,
+  lintMarkdown,
 } from "@/api";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import axios from "axios";
@@ -254,6 +257,53 @@ export default class PluginSample extends Plugin {
               cmd: "returnUploadMethodStatus",
               data: {
                 uploadMethod: "s3",
+              },
+            },
+            { targetOrigin: "*" },
+          );
+        }
+      }
+      // 保存bm.md配置
+      else if (event.data.cmd === "saveBmmdConfig") {
+        try {
+          await this.saveData("bmmd-config.json", event.data.data);
+          console.log("bm.md配置已保存:", event.data.data);
+          // 更新插件实例中的数据
+          this.data.bmmdConfig = event.data.data;
+        } catch (error) {
+          console.error("保存bm.md配置失败:", error);
+        }
+      }
+      // 获取bm.md配置状态
+      else if (event.data.cmd === "getBmmdConfigStatus") {
+        try {
+          const bmmdConfig = this.getBmMdConfig();
+          const configured = bmmdConfig;
+
+          console.log("Returning bm.md config status:", {
+            configured: !!configured,
+            config: bmmdConfig,
+          });
+
+          // 将配置状态发送回请求的组件
+          event.source.postMessage(
+            {
+              cmd: "returnBmmdConfigStatus",
+              data: {
+                configured: !!configured,
+                config: bmmdConfig || {},
+              },
+            },
+            { targetOrigin: "*" },
+          );
+        } catch (error) {
+          console.error("获取bm.md配置状态失败:", error);
+          event.source.postMessage(
+            {
+              cmd: "returnBmmdConfigStatus",
+              data: {
+                configured: false,
+                config: {},
               },
             },
             { targetOrigin: "*" },
@@ -557,6 +607,42 @@ export default class PluginSample extends Plugin {
       console.log("Error loading upload method config:", error);
       this.data.uploadMethod = "s3"; // 默认使用S3
     }
+
+    // 加载bm.md配置
+    try {
+      const bmmdConfig = await this.loadData("bmmd-config.json");
+      if (bmmdConfig) {
+        console.log("Loaded bm.md config:", bmmdConfig);
+        this.data.bmmdConfig = bmmdConfig;
+      } else {
+        console.log("No bm.md config found");
+        // 设置默认值
+        this.data.bmmdConfig = {
+          enableLint: false,
+          enableFootnoteLinks: true,
+          footnoteLabel: "Footnotes",
+          openLinksInNewWindow: true,
+          referenceTitle: "References",
+          codeTheme: "kimbie-light",
+          markdownStyle: "ayu-light",
+          platform: "html",
+          customCss: "",
+        };
+      }
+    } catch (error) {
+      console.log("Error loading bm.md config:", error);
+      this.data.bmmdConfig = {
+        enableLint: false,
+        enableFootnoteLinks: true,
+        footnoteLabel: "Footnotes",
+        openLinksInNewWindow: true,
+        referenceTitle: "References",
+        codeTheme: "kimbie-light",
+        markdownStyle: "ayu-light",
+        platform: "html",
+        customCss: "",
+      };
+    }
   }
 
   onLayoutReady() {
@@ -758,6 +844,62 @@ export default class PluginSample extends Plugin {
                 });
               },
             },
+            {
+              icon: "iconCopy",
+              label: "导出bm.md渲染到剪切板",
+              click: async () => {
+                exportMdContent(id).then(async (res) => {
+                  const config = this.getBmMdConfig();
+                  if (!config) {
+                    showMessage("请先配置bm.md渲染设置");
+                    this.openSetting();
+                    return;
+                  }
+
+                  const processedContent = await this.processMarkdownContent(
+                    res.content,
+                  );
+                  if (!processedContent) {
+                    return;
+                  }
+                  try {
+                    let content = processedContent;
+                    const apiUrl = "https://bm.md/api";
+
+                    // 如果开启了校验和修复，先调用lint接口
+                    if (config.enableLint) {
+                      content = await lintMarkdown(content, apiUrl);
+                    }
+
+                    // 调用渲染接口
+                    const rendered = await renderBmMd(content, apiUrl, {
+                      codeTheme: config.codeTheme || "kimbie-light",
+                      markdownStyle: config.markdownStyle || "ayu-light",
+                      platform: config.platform || "html",
+                      enableFootnoteLinks: config.enableFootnoteLinks,
+                      footnoteLabel: config.footnoteLabel,
+                      openLinksInNewWindow: config.openLinksInNewWindow,
+                      referenceTitle: config.referenceTitle,
+                      customCss: config.customCss,
+                    });
+
+                    // 根据平台选择复制方式
+                    const platform = config.platform || "html";
+                    if (platform === "wechat" || platform === "mp-wechat") {
+                      // 微信平台使用富文本复制
+                      await copyHtml(rendered);
+                    } else {
+                      // 其他平台使用纯文本复制
+                      await navigator.clipboard.writeText(rendered);
+                    }
+                    showMessage("已复制到剪切板");
+                  } catch (error) {
+                    console.error("bm.md渲染失败:", error);
+                    showMessage("bm.md渲染失败: " + error.message);
+                  }
+                });
+              },
+            },
           );
         }
         break;
@@ -952,6 +1094,65 @@ export default class PluginSample extends Plugin {
         });
       },
     });
+    menu.addSeparator();
+    menu.addItem({
+      icon: "iconCopy",
+      label: "导出bm.md渲染到剪切板",
+      click: async () => {
+        // 获取当前聚焦的id
+        const docId = await this.get_active_page();
+        exportMdContent(docId).then(async (res) => {
+          const config = this.getBmMdConfig();
+          if (!config) {
+            showMessage("请先配置bm.md渲染设置");
+            this.openSetting();
+            return;
+          }
+
+          const processedContent = await this.processMarkdownContent(
+            res.content,
+          );
+          if (!processedContent) {
+            return;
+          }
+          try {
+            let content = processedContent;
+            const apiUrl = "https://bm.md/api";
+
+            // 如果开启了校验和修复，先调用lint接口
+            if (config.enableLint) {
+              content = await lintMarkdown(content, apiUrl);
+            }
+
+            // 调用渲染接口
+            const rendered = await renderBmMd(content, apiUrl, {
+              codeTheme: config.codeTheme || "kimbie-light",
+              markdownStyle: config.markdownStyle || "ayu-light",
+              platform: config.platform || "html",
+              enableFootnoteLinks: config.enableFootnoteLinks,
+              footnoteLabel: config.footnoteLabel,
+              openLinksInNewWindow: config.openLinksInNewWindow,
+              referenceTitle: config.referenceTitle,
+              customCss: config.customCss,
+            });
+
+            // 根据平台选择复制方式
+            const platform = config.platform || "html";
+            if (platform === "wechat" || platform === "mp-wechat") {
+              // 微信平台使用富文本复制
+              await copyHtml(rendered);
+            } else {
+              // 其他平台使用纯文本复制
+              await navigator.clipboard.writeText(rendered);
+            }
+            showMessage("已复制到剪切板");
+          } catch (error) {
+            console.error("bm.md渲染失败:", error);
+            showMessage("bm.md渲染失败: " + error.message);
+          }
+        });
+      },
+    });
 
     if (this.isMobile) {
       menu.fullscreen();
@@ -987,6 +1188,23 @@ export default class PluginSample extends Plugin {
    */
   public getUploadMethod(): string {
     return this.data.uploadMethod || "s3";
+  }
+
+  /**
+   * 获取bm.md配置
+   * @returns bm.md配置对象，如果未配置则返回null
+   */
+  public getBmMdConfig(): any {
+    return this.data.bmmdConfig || null;
+  }
+
+  /**
+   * 检查bm.md配置是否已设置
+   * @returns boolean
+   */
+  public isBmMdConfigured(): boolean {
+    const config = this.getBmMdConfig();
+    return !!config;
   }
 
   /**

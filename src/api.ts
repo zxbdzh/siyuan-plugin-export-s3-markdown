@@ -15,6 +15,24 @@ import axios from "axios";
 
 import { fetchPost, fetchSyncPost, IWebSocketData } from "siyuan";
 
+/**
+ * 复制 HTML 内容到剪切板，支持富文本粘贴（如微信）
+ * @param html HTML 内容
+ * @returns 是否成功
+ */
+export async function copyHtml(html: string): Promise<boolean> {
+  try {
+    const item = new ClipboardItem({
+      "text/html": new Blob([html], { type: "text/html" }),
+      "text/plain": new Blob([html], { type: "text/plain" }),
+    });
+    await navigator.clipboard.write([item]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function request(url: string, data: any) {
   let response: IWebSocketData = await fetchSyncPost(url, data);
   let res = response.code === 0 ? response.data : null;
@@ -654,5 +672,84 @@ export async function testPicListConnection(
     console.error("PicList连接测试错误:", error);
     await pushErrMsg("PicList连接测试失败: " + error.message);
     return false;
+  }
+}
+
+// **************************************** bm.md API ****************************************
+
+/**
+ * 渲染 Markdown 为 bm.md 格式
+ * @param markdown Markdown 内容
+ * @param apiUrl bm.md API 基础地址
+ * @param config 配置对象
+ * @returns 渲染后的 HTML 或 Markdown
+ */
+export async function renderBmMd(
+  markdown: string,
+  apiUrl: string,
+  config: {
+    codeTheme?: string;
+    markdownStyle?: string;
+    platform?: string;
+    enableFootnoteLinks?: boolean;
+    footnoteLabel?: string;
+    openLinksInNewWindow?: boolean;
+    referenceTitle?: string;
+    customCss?: string;
+  },
+): Promise<string> {
+  try {
+    const response = await axios.post(`${apiUrl}/markdown/render`, {
+      markdown: markdown,
+      codeTheme: config.codeTheme || "kimbie-light",
+      markdownStyle: config.markdownStyle || "ayu-light",
+      platform: config.platform || "html",
+      enableFootnoteLinks: config.enableFootnoteLinks,
+      footnoteLabel: config.footnoteLabel,
+      openLinksInNewWindow: config.openLinksInNewWindow,
+      referenceTitle: config.referenceTitle,
+      customCss: config.customCss,
+    });
+
+    if (response.data.result) {
+      // 去除转义符
+      let result = response.data.result;
+      // 使用 textarea 来反转义 HTML 实体
+      const textarea = document.createElement("textarea");
+      textarea.innerHTML = result;
+      result = textarea.value;
+      return result;
+    } else {
+      throw new Error("渲染失败: 未知错误");
+    }
+  } catch (error) {
+    console.error("bm.md渲染错误:", error);
+    throw error;
+  }
+}
+
+/**
+ * 校验和修复 Markdown
+ * @param markdown Markdown 内容
+ * @param apiUrl bm.md API 基础地址
+ * @returns 修复后的 Markdown
+ */
+export async function lintMarkdown(
+  markdown: string,
+  apiUrl: string,
+): Promise<string> {
+  try {
+    const response = await axios.post(`${apiUrl}/markdown/lint`, {
+      markdown: markdown,
+    });
+
+    if (response.data.result) {
+      return response.data.result;
+    } else {
+      throw new Error("Lint 失败: 未知错误");
+    }
+  } catch (error) {
+    console.error("Markdown Lint错误:", error);
+    throw error;
   }
 }

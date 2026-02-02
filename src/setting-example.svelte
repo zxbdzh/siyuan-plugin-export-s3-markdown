@@ -2,7 +2,7 @@
     import SettingPanel from "./libs/components/setting-panel.svelte";
     import {pushErrMsg, pushMsg, testS3Connection, testPicListConnection} from "@/api";
 
-    let groups: string[] = ["🌈 s3 设置", "🌈 PicList 设置", "🔧 上传方式选择"];
+    let groups: string[] = ["🌈 s3 设置", "🌈 PicList 设置", "🔧 上传方式选择", "🌈 bm.md 渲染设置"];
     let focusGroup = groups[0];
     let testing = false; // 添加测试状态标记
     let piclistTesting = false; // PicList测试状态标记
@@ -227,6 +227,147 @@
         }
     ];
 
+    let group4Items: ISettingItem[] = [
+        {
+            type: 'checkbox',
+            title: '开启校验和修复',
+            description: '在渲染前自动校验和修复 Markdown 源文本',
+            key: 'enableLint',
+            value: false
+        },
+        {
+            type: 'checkbox',
+            title: '启用脚注链接',
+            description: '是否将文中链接自动转换为脚注形式，便于阅读时查看原始链接',
+            key: 'enableFootnoteLinks',
+            value: true
+        },
+        {
+            type: 'textinput',
+            title: '脚注区域标题',
+            description: 'GFM 脚注区域标题',
+            key: 'footnoteLabel',
+            value: 'Footnotes',
+            placeholder: '默认为 Footnotes'
+        },
+        {
+            type: 'checkbox',
+            title: '新窗口打开链接',
+            description: '是否为所有外部链接添加 target="_blank"，在新窗口打开',
+            key: 'openLinksInNewWindow',
+            value: true
+        },
+        {
+            type: 'textinput',
+            title: '参考区域标题',
+            description: '外部链接参考区域标题',
+            key: 'referenceTitle',
+            value: 'References',
+            placeholder: '默认为 References'
+        },
+        {
+            type: 'select',
+            title: '代码块高亮主题',
+            description: '选择代码块语法高亮使用的主题',
+            key: 'codeTheme',
+            value: 'kimbie-light',
+            options: {
+                'kimbie-light': 'Kimbie Light',
+                'kimbie-dark': 'Kimbie Dark',
+                'catppuccin-frappe': 'Catppuccin Frappe',
+                'catppuccin-latte': 'Catppuccin Latte',
+                'catppuccin-macchiato': 'Catppuccin Macchiato',
+                'catppuccin-mocha': 'Catppuccin Mocha',
+                'panda-syntax-dark': 'Panda Syntax Dark',
+                'panda-syntax-light': 'Panda Syntax Light',
+                'paraiso-dark': 'Paraiso Dark',
+                'paraiso-light': 'Paraiso Light',
+                'rose-pine': 'Rose Pine',
+                'rose-pine-dawn': 'Rose Pine Dawn',
+                'tokyo-night-dark': 'Tokyo Night Dark',
+                'tokyo-night-light': 'Tokyo Night Light'
+            }
+        },
+        {
+            type: 'select',
+            title: 'Markdown 排版样式',
+            description: '选择 Markdown 文档的排版样式',
+            key: 'markdownStyle',
+            value: 'ayu-light',
+            options: {
+                'ayu-light': 'Ayu Light',
+                'bauhaus': 'Bauhaus',
+                'blueprint': 'Blueprint',
+                'botanical': 'Botanical',
+                'green-simple': 'Green Simple',
+                'maximalism': 'Maximalism',
+                'neo-brutalism': 'Neo Brutalism',
+                'newsprint': 'Newsprint',
+                'organic': 'Organic',
+                'playful-geometric': 'Playful Geometric',
+                'professional': 'Professional',
+                'retro': 'Retro',
+                'sketch': 'Sketch',
+                'terminal': 'Terminal'
+            }
+        },
+        {
+            type: 'select',
+            title: '目标发布平台',
+            description: '选择渲染后的目标平台格式，会针对平台特性进行适配优化',
+            key: 'platform',
+            value: 'html',
+            options: {
+                'html': 'HTML (通用网页)',
+                'wechat': '微信公众号',
+                'zhihu': '知乎专栏',
+                'juejin': '掘金'
+            }
+        },
+        {
+            type: 'textarea',
+            title: '自定义 CSS',
+            description: '自定义 CSS 样式，在主题样式之后应用。选择器需约束在 #bm-md 下，例如：#bm-md h1 { color: red; }',
+            key: 'customCss',
+            value: '',
+            placeholder: '请输入自定义CSS样式，留空则不使用'
+        },
+        {
+            type: 'button',
+            title: '保存',
+            description: '保存bm.md配置项',
+            key: 'saveBmmd',
+            value: '',
+            button: {
+                label: '保存bm.md配置',
+                callback: async () => {
+                    await pushMsg('正在保存bm.md配置项...', 2000);
+                    const data = {
+                        enableLint: getValueFromGroup('enableLint', group4Items),
+                        enableFootnoteLinks: getValueFromGroup('enableFootnoteLinks', group4Items),
+                        footnoteLabel: getValueFromGroup('footnoteLabel', group4Items),
+                        openLinksInNewWindow: getValueFromGroup('openLinksInNewWindow', group4Items),
+                        referenceTitle: getValueFromGroup('referenceTitle', group4Items),
+                        codeTheme: getValueFromGroup('codeTheme', group4Items),
+                        markdownStyle: getValueFromGroup('markdownStyle', group4Items),
+                        platform: getValueFromGroup('platform', group4Items),
+                        customCss: getValueFromGroup('customCss', group4Items)
+                    }
+
+                    console.log('Saving bm.md config data:', data);
+
+                    // 通过postMessage发送数据给插件保存
+                    window.parent.postMessage({
+                        cmd: 'saveBmmdConfig',
+                        data: data
+                    }, '*');
+
+                    await pushMsg('bm.md配置保存成功！', 2000);
+                }
+            }
+        }
+    ];
+
     // 从配置项中获取当前值的辅助函数
     function getValue(key: string): string {
         const item = group1Items.find(item => item.key === key);
@@ -234,9 +375,9 @@
     }
 
     // 从指定组中获取配置值的辅助函数
-    function getValueFromGroup(key: string, group: ISettingItem[]): string {
+    function getValueFromGroup(key: string, group: ISettingItem[]): any {
         const item = group.find(item => item.key === key);
-        return item ? item.value : '';
+        return item !== undefined ? item.value : '';
     }
 
     // S3连接测试函数
@@ -430,6 +571,24 @@
         });
     }
 
+    // 获取bm.md配置状态的辅助函数
+    async function getBmmdConfigStatus(): Promise<{ config: any }> {
+        return new Promise((resolve) => {
+            // 发送消息请求获取bm.md配置状态
+            window.parent.postMessage({cmd: 'getBmmdConfigStatus'}, '*');
+
+            // 监听返回结果
+            const handleResponse = (event: MessageEvent) => {
+                if (event.data.cmd === 'returnBmmdConfigStatus') {
+                    window.removeEventListener('message', handleResponse);
+                    resolve(event.data.data);
+                }
+            };
+
+            window.addEventListener('message', handleResponse);
+        });
+    }
+
 // 组件加载时检查配置状态
     (async () => {
         try {
@@ -476,6 +635,23 @@
                         return {
                             ...item,
                             value: uploadMethodStatus.uploadMethod
+                        };
+                    }
+                    return item;
+                });
+
+                panelKey++; // 增加key值强制重新渲染
+            }
+
+            // 检查bm.md配置状态
+            const bmmdStatus = await getBmmdConfigStatus();
+            if (bmmdStatus && bmmdStatus.config) {
+                // 填充bm.md配置项
+                group4Items = group4Items.map(item => {
+                    if (bmmdStatus.config && bmmdStatus.config[item.key] !== undefined) {
+                        return {
+                            ...item,
+                            value: bmmdStatus.config[item.key]
                         };
                     }
                     return item;
@@ -563,6 +739,21 @@
                 cmd: 'saveUploadMethod',
                 data: { uploadMethod: uploadMethod }
             }, '*');
+        } else if (detail.group === groups[3]) { // bm.md渲染设置
+            console.log('bm.md Setting changed:', detail.key, '=', detail.value);
+
+            // 更新对应配置项的值
+            group4Items = group4Items.map(item => {
+                if (item.key === detail.key) {
+                    return {
+                        ...item,
+                        value: detail.value
+                    };
+                }
+                return item;
+            });
+
+            panelKey++; // 增加key值强制重新渲染
         }
 
         // setting.set(detail.key, detail.value);
@@ -632,6 +823,17 @@
         >
             <div class="fn__flex b3-label">
                 💡 上传方式选择.
+            </div>
+        </SettingPanel>
+        <SettingPanel
+                group={groups[3]}
+                settingItems={group4Items}
+                display={focusGroup === groups[3]}
+                on:changed={onChanged}
+                on:click={onButtonClick}
+        >
+            <div class="fn__flex b3-label">
+                💡 bm.md渲染设置.
             </div>
         </SettingPanel>
     </div>
